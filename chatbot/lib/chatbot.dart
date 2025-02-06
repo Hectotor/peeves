@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:http/http.dart' as http;
 import 'dart:convert';
-import 'services/chroma_service.dart';
 
 const String GEMINI_API_KEY = 'AIzaSyBeiIggxVotCsQJCk1TFmP_ugWVRr57QGY';
 const String GEMINI_API_URL =
@@ -20,60 +19,39 @@ class _ChatBotScreenState extends State<ChatBotScreen> {
   final List<Map<String, dynamic>> _messages = [
     {
       "bot":
-          "Bonjour, je suis Peeves votre assistant virtuel, en quoi puis-je vous aider pour votre orientation professionnelle?",
+          "Je suis Peeves, votre assistant virtuel. En quoi puis-je vous aider pour votre orientation professionnelle?",
       "isLoading": false
     }
   ];
   bool _isLoading = false;
-  final ChromaService _chromaService = ChromaService();
-  static const String collectionName =
-      'formations_parcoursup'; // Nom lisible pour les logs
+  List<Map<String, dynamic>> _formations = [];
 
   @override
   void initState() {
     super.initState();
-    _initializeChroma();
+    _loadFormations();
   }
 
-  Future<void> _initializeChroma() async {
+  Future<void> _loadFormations() async {
     try {
-      print('Début initialisation ChromaDB');
-      bool exists = await _chromaService.checkCollection(collectionName);
-
-      if (!exists) {
-        print('Collection inexistante, tentative de création');
-        bool created = await _chromaService.createCollection(collectionName);
-        if (!created) {
-          throw Exception('Échec de la création de la collection');
-        }
-        print('Collection créée avec succès');
-
-        await Future.delayed(
-            const Duration(seconds: 1)); // Attendre un peu après la création
-
-        // Chargement et ajout des formations
-        final String response =
-            await rootBundle.loadString('assets/formations_parcoursup.json');
-        final data = await json.decode(response);
-        await _chromaService.addDocuments(
-            collectionName, List<Map<String, dynamic>>.from(data));
-        print('Données chargées avec succès');
-      } else {
-        print('Collection existante, initialisation terminée');
-      }
+      final String response =
+          await rootBundle.loadString('assets/formations_parcoursup.json');
+      final data = await json.decode(response);
+      setState(() {
+        _formations = List<Map<String, dynamic>>.from(data);
+      });
+      print('Données chargées avec succès');
     } catch (e) {
-      print('Erreur d\'initialisation de ChromaDB: $e');
+      print('Erreur lors du chargement des données: $e');
     }
   }
 
   Future<String> _askGemini(String question) async {
     try {
-      // Rechercher les formations pertinentes via ChromaDB
-      final formations =
-          await _chromaService.queryFormations(collectionName, question);
-      String contextData = formations
+      // Rechercher les formations pertinentes dans le fichier JSON
+      String contextData = _formations
           .map((formation) =>
-              "${formation['metadata']['nom_etablissement']} - ${formation['metadata']['nom_formation']}")
+              "${formation['nom_etablissement']} - ${formation['nom_formation']}")
           .join("\n");
 
       String promptWithContext = """
