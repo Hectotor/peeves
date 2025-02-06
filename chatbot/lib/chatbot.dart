@@ -2,8 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:http/http.dart' as http;
 import 'dart:convert';
+import 'services/chroma_service.dart';
 
-const String GEMINI_API_KEY = '';
+const String GEMINI_API_KEY = 'AIzaSyBeiIggxVotCsQJCk1TFmP_ugWVRr57QGY';
 const String GEMINI_API_URL =
     'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent';
 
@@ -19,56 +20,93 @@ class _ChatBotScreenState extends State<ChatBotScreen> {
   final List<Map<String, dynamic>> _messages = [
     {
       "bot":
-          "Bonjour, je suis votre assistant virtuel je m'appelle Peeves en quoi puis-je vous aider pour votre orientation professionnelle?",
+          "Bonjour, je suis Peeves votre assistant virtuel, en quoi puis-je vous aider pour votre orientation professionnelle?",
       "isLoading": false
     }
   ];
-  List<dynamic> _formations = [];
   bool _isLoading = false;
+  final ChromaService _chromaService = ChromaService();
+  static const String collectionName =
+      'formations_parcoursup'; // Nom lisible pour les logs
 
   @override
   void initState() {
     super.initState();
-    _loadFormations();
+    _initializeChroma();
   }
 
-  Future<void> _loadFormations() async {
-    final String response =
-        await rootBundle.loadString('assets/formations_parcoursup.json');
-    final data = await json.decode(response);
-    setState(() {
-      _formations = data;
-    });
+  Future<void> _initializeChroma() async {
+    try {
+      print('Début initialisation ChromaDB');
+      bool exists = await _chromaService.checkCollection(collectionName);
+
+      if (!exists) {
+        print('Collection inexistante, tentative de création');
+        bool created = await _chromaService.createCollection(collectionName);
+        if (!created) {
+          throw Exception('Échec de la création de la collection');
+        }
+        print('Collection créée avec succès');
+
+        await Future.delayed(
+            const Duration(seconds: 1)); // Attendre un peu après la création
+
+        // Chargement et ajout des formations
+        final String response =
+            await rootBundle.loadString('assets/formations_parcoursup.json');
+        final data = await json.decode(response);
+        await _chromaService.addDocuments(
+            collectionName, List<Map<String, dynamic>>.from(data));
+        print('Données chargées avec succès');
+      } else {
+        print('Collection existante, initialisation terminée');
+      }
+    } catch (e) {
+      print('Erreur d\'initialisation de ChromaDB: $e');
+    }
   }
 
   Future<String> _askGemini(String question) async {
     try {
-      String contextData = _formations
+      // Rechercher les formations pertinentes via ChromaDB
+      final formations =
+          await _chromaService.queryFormations(collectionName, question);
+      String contextData = formations
           .map((formation) =>
-              "${formation['nom_etablissement']} - ${formation['nom_formation']} (Places disponibles: ${formation['places_disponibles']})")
+              "${formation['metadata']['nom_etablissement']} - ${formation['metadata']['nom_formation']}")
           .join("\n");
 
       String promptWithContext = """
-      Tu es un conseiller d'orientation professionnel spécialisé dans Parcoursup. 
-      Ton rôle est d'aider les étudiants à trouver la formation qui leur correspond.
-      
-      Voici la base de données des formations disponibles :
+      Tu es Peeves, un conseiller d'orientation moderne et dynamique spécialisé dans Parcoursup. 
+      Ta mission est d'aider les lycéens et étudiants à trouver leur voie dans l'enseignement supérieur.
+
+      Stratégie de recherche et présentation :
+      1. D'abord, cherche par type de formation demandée :
+         - Identifie le domaine d'études souhaité
+         - Trouve toutes les formations correspondantes
+         - Liste les 2-3 meilleures correspondances
+      2. Ensuite seulement, prends en compte la localisation :
+         - Parmi les formations trouvées, mets en avant celles dans la ville demandée
+         - Si aucune formation dans la ville, suggère la plus proche
+
+      Format de présentation des résultats :
+      1. "Voici les formations en [domaine] que j'ai trouvées :"
+      2. Pour chaque formation :
+         • Nom de la formation
+         • Établissement et ville
+         • Points clés
+         • Conseil d'admission
+
+      Règles essentielles :
+      1. Le type de formation est le critère principal
+      2. La localisation est un critère secondaire
+      3. Reste concis et direct
+      4. Si besoin de précision, pose UNE seule question ciblée
+
+      Je connais ces formations (à filtrer selon les critères ci-dessus) :
       $contextData
 
-      Directives de communication :
-      1. Maintenir un ton professionnel et bienveillant
-      2. Fournir des informations précises basées sur les données des formations
-      3. Structurer les réponses de manière claire et concise
-      4. Se concentrer uniquement sur les aspects académiques et professionnels
-      5. Éviter le langage familier ou les expressions décontractées
-      6. En cas de doute, recommander de consulter un conseiller d'orientation
-
       Question : $question
-
-      Structure de réponse à suivre :
-      1. Informations factuelles issues de la base de données
-      2. Analyse et recommandations professionnelles
-      3. Si nécessaire, suggestions d'alternatives pertinentes
       """;
 
       final response = await http.post(
@@ -128,70 +166,21 @@ class _ChatBotScreenState extends State<ChatBotScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: const Color(0xFFF2F2F7), // Fond gris très clair iOS
       appBar: AppBar(
-        elevation: 0,
-        flexibleSpace: Container(
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: [
-                Colors.deepPurple,
-                Colors.deepPurple.shade300,
-              ],
-            ),
+        backgroundColor: Color(0xFFf5fbff),
+        elevation: 0.5,
+        title: const Text(
+          'Peeves - Votre assistant d\'orientation',
+          style: TextStyle(
+            color: Colors.black87,
+            fontSize: 18,
           ),
         ),
-        title: Row(
-          children: [
-            Container(
-              padding: EdgeInsets.all(8),
-              decoration: BoxDecoration(
-                color: Colors.white24,
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Icon(
-                Icons.android,
-                color: Colors.white,
-                size: 24,
-              ),
-            ),
-            SizedBox(width: 12),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Peeves',
-                  style: TextStyle(
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.white,
-                  ),
-                ),
-                Text(
-                  'Assistant virtuel',
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: Colors.white70,
-                  ),
-                ),
-              ],
-            ),
-          ],
-        ),
         actions: [
-          Container(
-            margin: EdgeInsets.only(right: 8),
-            padding: EdgeInsets.all(8),
-            decoration: BoxDecoration(
-              color: Colors.white24,
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Icon(
-              Icons.info_outline,
-              color: Colors.white,
-              size: 24,
-            ),
+          IconButton(
+            icon: Icon(Icons.info_outline, color: Colors.blue[600]),
+            onPressed: () {},
           ),
         ],
       ),
@@ -200,6 +189,7 @@ class _ChatBotScreenState extends State<ChatBotScreen> {
           Expanded(
             child: ListView.builder(
               itemCount: _messages.length,
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
               itemBuilder: (context, index) {
                 final message = _messages[index];
                 final isUser = message.containsKey("user");
@@ -209,53 +199,68 @@ class _ChatBotScreenState extends State<ChatBotScreen> {
                   alignment:
                       isUser ? Alignment.centerRight : Alignment.centerLeft,
                   child: Container(
-                    margin:
-                        const EdgeInsets.symmetric(vertical: 5, horizontal: 10),
-                    padding: const EdgeInsets.all(10),
-                    decoration: BoxDecoration(
-                      color: isUser ? Colors.blue : Colors.deepPurple[100],
-                      borderRadius: BorderRadius.only(
-                        topLeft: Radius.circular(10),
-                        topRight: Radius.circular(10),
-                        bottomLeft: isUser ? Radius.circular(10) : Radius.zero,
-                        bottomRight: isUser ? Radius.zero : Radius.circular(10),
-                      ),
+                    margin: EdgeInsets.only(
+                      bottom: 4,
+                      top: 4,
+                      left: isUser ? 60 : 0,
+                      right: isUser ? 0 : 60,
                     ),
+                    decoration: BoxDecoration(
+                      color: isUser
+                          ? const Color(0xFF007AFF)
+                          : const Color(0xFFE5F3FD), // Couleurs iMessage
+                      borderRadius: BorderRadius.only(
+                        topLeft: const Radius.circular(17),
+                        topRight: const Radius.circular(17),
+                        bottomLeft: Radius.circular(isUser ? 17 : 5),
+                        bottomRight: Radius.circular(isUser ? 5 : 17),
+                      ),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.1),
+                          blurRadius: 5,
+                          offset: const Offset(0, 2),
+                        ),
+                      ],
+                    ),
+                    padding: const EdgeInsets.all(12),
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         if (!isUser)
-                          Padding(
-                            padding: const EdgeInsets.only(right: 8.0),
-                            child:
-                                Icon(Icons.android, color: Colors.deepPurple),
-                          ),
-                        if (isLoading)
                           Container(
-                            width: 50,
-                            child: Row(
-                              children: [
-                                SizedBox(
-                                  width: 20,
-                                  height: 20,
+                            margin: const EdgeInsets.only(right: 8),
+                            child: const CircleAvatar(
+                              backgroundColor: Colors.blue,
+                              radius: 12,
+                              child: Icon(
+                                Icons.school,
+                                size: 14,
+                                color: Colors.white,
+                              ),
+                            ),
+                          ),
+                        Flexible(
+                          child: isLoading
+                              ? const SizedBox(
+                                  height: 24,
+                                  width: 24,
                                   child: CircularProgressIndicator(
                                     strokeWidth: 2,
-                                    color: Colors.deepPurple,
+                                    color: Colors.black54,
+                                  ),
+                                )
+                              : Text(
+                                  isUser ? message["user"]! : message["bot"]!,
+                                  style: TextStyle(
+                                    color:
+                                        isUser ? Colors.white : Colors.black87,
+                                    fontSize: 15,
+                                    height: 1.4,
                                   ),
                                 ),
-                                SizedBox(width: 8),
-                                Text("...")
-                              ],
-                            ),
-                          )
-                        else
-                          Flexible(
-                            child: Text(
-                              isUser ? message["user"]! : message["bot"]!,
-                              style: TextStyle(
-                                  color: isUser ? Colors.white : Colors.black),
-                            ),
-                          ),
+                        ),
                       ],
                     ),
                   ),
@@ -263,8 +268,18 @@ class _ChatBotScreenState extends State<ChatBotScreen> {
               },
             ),
           ),
-          Padding(
-            padding: const EdgeInsets.all(8.0),
+          Container(
+            decoration: BoxDecoration(
+              color: Colors.white,
+              boxShadow: [
+                BoxShadow(
+                  offset: const Offset(0, -1),
+                  blurRadius: 5,
+                  color: Colors.black.withOpacity(0.1),
+                ),
+              ],
+            ),
+            padding: const EdgeInsets.all(16),
             child: Row(
               children: [
                 Expanded(
@@ -275,20 +290,38 @@ class _ChatBotScreenState extends State<ChatBotScreen> {
                       hintText: _isLoading
                           ? 'Peeves réfléchit...'
                           : 'Posez votre question...',
+                      hintStyle: const TextStyle(color: Colors.black45),
+                      filled: true,
+                      fillColor: Colors.grey[100],
                       border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(10),
+                        borderRadius: BorderRadius.circular(25),
+                        borderSide: BorderSide.none,
+                      ),
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 20,
+                        vertical: 12,
                       ),
                     ),
                   ),
                 ),
-                IconButton(
-                  icon: const Icon(Icons.send, color: Colors.deepPurple),
-                  onPressed: _isLoading ? null : _sendMessage,
+                const SizedBox(width: 12),
+                Container(
+                  decoration: const BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: Colors.black87,
+                  ),
+                  child: IconButton(
+                    icon: Icon(
+                      Icons.send,
+                      color: _isLoading ? Colors.grey[400] : Colors.white,
+                      size: 20,
+                    ),
+                    onPressed: _isLoading ? null : _sendMessage,
+                  ),
                 ),
               ],
             ),
           ),
-          const SizedBox(height: 30),
         ],
       ),
     );
